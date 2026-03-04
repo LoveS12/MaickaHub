@@ -1,0 +1,332 @@
+   local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local ESP_ENABLED = false
+local AIMBOT_ENABLED = false
+local SPEED_ENABLED = false
+local BHOP_ENABLED = false
+local TEAM_CHECK_ENABLED = true
+
+local AIM_PARTS = {"Head", "UpperTorso", "LowerTorso", "HumanoidRootPart"}
+local FOV = 200
+local SMOOTHNESS = 0.10  
+local MAX_DISTANCE = 2000
+local PREDICTION = 0.165  
+local SPEED_VALUE = 50
+
+local esp_objects = {}
+local fov_circle = nil
+local menu_text = nil
+local menu_visible = false
+local frame_count = 0
+local targets = 0
+
+
+local speed_connection = nil
+local function update_speed()
+    if not LocalPlayer.Character then return end
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.WalkSpeed = SPEED_VALUE
+    end
+end
+
+local function notify(msg)
+    local notif = Drawing.new("Text")
+    notif.Size = 22
+    notif.Color = Color3.fromRGB(0, 255, 0)
+    notif.Outline = true
+    notif.Center = true
+    notif.Text = msg
+    notif.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2 - 50)
+    notif.Visible = true
+    notif.Transparency = 1
+    local conn
+    conn = RunService.RenderStepped:Connect(function()
+        notif.Position = notif.Position + Vector2.new(0, -2)
+        notif.Transparency = notif.Transparency - 0.015
+        if notif.Transparency <= 0 then
+            notif:Remove()
+            conn:Disconnect()
+        end
+    end)
+end
+
+local function update_fov_circle()
+    if fov_circle then
+        fov_circle.Radius = FOV
+        fov_circle.Position = UserInputService:GetMouseLocation()
+        fov_circle.Visible = AIMBOT_ENABLED
+    end
+end
+
+local function create_fov_circle()
+    fov_circle = Drawing.new("Circle")
+    fov_circle.NumSides = 64
+    fov_circle.Thickness = 3
+    fov_circle.Color = Color3.fromRGB(0, 255, 255)
+    fov_circle.Filled = false
+    fov_circle.Transparency = 0.6
+    fov_circle.Visible = false
+end
+
+local function create_menu()
+    menu_text = Drawing.new("Text")
+    menu_text.Size = 17
+    menu_text.Color = Color3.fromRGB(255, 255, 255)
+    menu_text.Outline = true
+    menu_text.Center = true
+    menu_text.Visible = false
+    menu_text.Font = 2
+end
+
+local function update_menu()
+    local team_status = TEAM_CHECK_ENABLED and "ON" or "OFF"
+    local status = "ESP: " .. (ESP_ENABLED and "ON" or "OFF") .. " [E]\n"
+    status = status .. "Aimbot: " .. (AIMBOT_ENABLED and "ON" or "OFF") .. " [R]\n"
+    status = status .. "Speed: " .. (SPEED_ENABLED and "ON" or "OFF") .. " [T]\n"
+    status = status .. "BHop: " .. (BHOP_ENABLED and "ON" or "OFF") .. " [Y]\n"
+    status = status .. "TeamLock: " .. team_status .. " [U]\n"
+    status = status .. "FOV: " .. FOV .. " [↑↓]\nTargets: " .. targets
+    if menu_text then
+        menu_text.Text = "AIMBOT\n" .. status
+    end
+end
+
+create_menu()
+create_fov_circle()
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    local changed = false
+    if input.KeyCode == Enum.KeyCode.K then
+        menu_visible = not menu_visible
+        changed = true
+    elseif input.KeyCode == Enum.KeyCode.E then
+        ESP_ENABLED = not ESP_ENABLED
+        notify("ESP " .. (ESP_ENABLED and "ON" or "OFF"))
+        changed = true
+    elseif input.KeyCode == Enum.KeyCode.R then
+        AIMBOT_ENABLED = not AIMBOT_ENABLED
+        notify("Aimbot " .. (AIMBOT_ENABLED and "ON (SMOOTH)" or "OFF"))
+        changed = true
+    elseif input.KeyCode == Enum.KeyCode.T then
+        SPEED_ENABLED = not SPEED_ENABLED
+        if SPEED_ENABLED then
+            speed_connection = RunService.Heartbeat:Connect(update_speed)
+            notify("Speed ON (50)")
+        else
+            if speed_connection then
+                speed_connection:Disconnect()
+                speed_connection = nil
+            end
+            notify("Speed OFF")
+        end
+        changed = true
+    elseif input.KeyCode == Enum.KeyCode.Y then
+        BHOP_ENABLED = not BHOP_ENABLED
+        notify("BHop " .. (BHOP_ENABLED and "ON" or "OFF"))
+        changed = true
+    elseif input.KeyCode == Enum.KeyCode.U then
+        TEAM_CHECK_ENABLED = not TEAM_CHECK_ENABLED
+        notify("Team Lock " .. (TEAM_CHECK_ENABLED and "ON" or "OFF"))
+        changed = true
+    elseif input.KeyCode == Enum.KeyCode.Up then
+        FOV = math.min(800, FOV + 50)
+        changed = true
+    elseif input.KeyCode == Enum.KeyCode.Down then
+        FOV = math.max(150, FOV - 50)
+        changed = true
+    end
+    if changed then
+        update_menu()
+        update_fov_circle()
+    end
+end)
+
+local function create_esp(player)
+    if esp_objects[player] then return end
+    local objs = {}
+    objs.box = Drawing.new("Square")
+    objs.box.Thickness = 2
+    objs.box.Color = Color3.fromRGB(0, 255, 0)
+    objs.box.Filled = false
+    objs.box.Transparency = 1
+    objs.tracer = Drawing.new("Line")
+    objs.tracer.Thickness = 2
+    objs.tracer.Color = Color3.fromRGB(255, 255, 0)
+    objs.tracer.Transparency = 1
+    objs.name = Drawing.new("Text")
+    objs.name.Size = 15
+    objs.name.Color = Color3.fromRGB(255, 255, 255)
+    objs.name.Outline = true
+    objs.name.Center = true
+    objs.name.Font = 2
+    objs.distance = Drawing.new("Text")
+    objs.distance.Size = 13
+    objs.distance.Color = Color3.fromRGB(200, 200, 255)
+    objs.distance.Outline = true
+    objs.distance.Center = true
+    objs.distance.Font = 1
+    esp_objects[player] = objs
+end
+
+local function remove_esp(player)
+    if esp_objects[player] then
+        for _, obj in pairs(esp_objects[player]) do
+            obj:Remove()
+        end
+        esp_objects[player] = nil
+    end
+end
+
+local function hide_esp(player)
+    if esp_objects[player] then
+        for _, obj in pairs(esp_objects[player]) do
+            obj.Visible = false
+        end
+    end
+end
+
+local function is_opponent(player)
+    if not TEAM_CHECK_ENABLED then return true end
+    return not (player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team)
+end
+
+RunService.RenderStepped:Connect(function()
+    frame_count = frame_count + 1
+    targets = 0
+    
+    if menu_visible and menu_text then
+        menu_text.Position = Vector2.new(Camera.ViewportSize.X / 2, 25)
+        menu_text.Visible = true
+    end
+    
+    update_fov_circle()
+    
+    for player, _ in pairs(esp_objects) do
+        if not player.Parent or not player.Character or (player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health <= 0) then
+            remove_esp(player)
+        end
+    end
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then continue end
+        if not is_opponent(player) then continue end
+        
+        local root = player.Character.HumanoidRootPart
+        local dist = (root.Position - Camera.CFrame.Position).Magnitude
+        if dist > MAX_DISTANCE then continue end
+        
+        local root_pos, on_screen = Camera:WorldToViewportPoint(root.Position)
+        if not on_screen then
+            hide_esp(player)
+            continue
+        end
+        
+        targets = targets + 1
+        
+        if ESP_ENABLED then
+            create_esp(player)
+            local objs = esp_objects[player]
+            local head_pos = player.Character:FindFirstChild("Head") and player.Character.Head.Position or root.Position
+            local top_pos = Camera:WorldToViewportPoint(head_pos + Vector3.new(0, 1, 0))
+            local bot_pos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 4, 0))
+            local height = math.abs(bot_pos.Y - top_pos.Y)
+            local width = height * 0.45
+            
+            objs.box.Size = Vector2.new(width, height)
+            objs.box.Position = Vector2.new(root_pos.X - width/2, top_pos.Y)
+            objs.box.Visible = true
+            
+            objs.tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+            objs.tracer.To = Vector2.new(root_pos.X, root_pos.Y)
+            objs.tracer.Visible = true
+            
+            objs.name.Text = player.Name
+            objs.name.Position = Vector2.new(root_pos.X, top_pos.Y - 20)
+            objs.name.Visible = true
+            
+            objs.distance.Text = math.floor(dist) .. " studs"
+            objs.distance.Position = Vector2.new(root_pos.X, bot_pos.Y + 8)
+            objs.distance.Visible = true
+        else
+            hide_esp(player)
+        end
+    end
+    
+    if frame_count % 20 == 0 then
+        update_menu()
+    end
+end)
+
+-- SMOOTH AIMBOT (Stepped loop + better lerp + prediction)
+RunService.Stepped:Connect(function()  -- ↑ Stepped = smoother than Heartbeat
+    if not AIMBOT_ENABLED then return end
+    local best_target_pos = nil
+    local best_screen_dist = math.huge
+    local mouse_pos = UserInputService:GetMouseLocation()
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer or not player.Character or not is_opponent(player) then continue end
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then continue end
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
+        local dist = (root.Position - Camera.CFrame.Position).Magnitude
+        if dist > MAX_DISTANCE then continue end
+        
+        for _, part_name in ipairs(AIM_PARTS) do
+            local part = player.Character:FindFirstChild(part_name)
+            if part then
+                -- Improved prediction (velocity * time + acceleration factor)
+                local v_pred = root.Velocity * PREDICTION
+                local predict_pos = part.Position + v_pred + (root.Velocity * 0.03)  -- Extra smooth factor
+                
+                local screen_pos, on_screen = Camera:WorldToViewportPoint(predict_pos)
+                local screen_dist = (Vector2.new(screen_pos.X, screen_pos.Y) - mouse_pos).Magnitude
+                if on_screen and screen_dist < best_screen_dist and screen_dist < FOV then
+                    best_screen_dist = screen_dist
+                    best_target_pos = predict_pos
+                end
+            end
+        end
+    end
+    
+    if best_target_pos then
+        -- Ultra-smooth lerp (exponential decay style)
+        local current_dir = Camera.CFrame.LookVector
+        local target_dir = (best_target_pos - Camera.CFrame.Position).Unit
+        local lerped = current_dir:lerp(target_dir, SMOOTHNESS)
+        Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, Camera.CFrame.Position + lerped)
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        local hum = LocalPlayer.Character.Humanoid
+        if BHOP_ENABLED and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            hum.JumpPower = 75
+            if LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                LocalPlayer.Character.HumanoidRootPart.Velocity = LocalPlayer.Character.HumanoidRootPart.Velocity + Vector3.new(0, 50, 0)
+            end
+        end
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if SPEED_ENABLED then
+        task.wait(0.1)
+        speed_connection = RunService.Heartbeat:Connect(update_speed)
+    end
+end)
+
+Players.PlayerRemoving:Connect(remove_esp)
+
+notify("loaded")
+update_menu()
